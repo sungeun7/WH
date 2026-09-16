@@ -1,0 +1,10 @@
+{
+  "resolve_action": "mitigate",
+  "http_block_on_resolve": true,
+  "windows_process": "confirm",
+  "windows_firewall": "confirm",
+  "http_auto_respond": true,
+  "llm_provider": "auto",
+  "openai_api_key": "",
+  "gemini_api_key": ""
+}

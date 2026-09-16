@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WHNormalizedEvent",
+  "type": "object",
+  "required": ["source", "type", "timestamp", "fields"],
+  "properties": {
+    "id": { "type": "string" },
+    "source": { "enum": ["http", "windows"] },
+    "type": {
+      "enum": [
+        "request",
+        "auth_fail",
+        "process_start",
+        "net_connect",
+        "file_change",
+        "port_open"
+      ]
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "severity_hint": {
+      "type": ["string", "null"],
+      "enum": ["low", "medium", "high", "critical", null]
+    },
+    "fields": {
+      "type": "object",
+      "properties": {
+        "client_ip": { "type": "string" },
+        "method": { "type": "string" },
+        "path": { "type": "string" },
+        "status": { "type": "integer" },
+        "has_auth": { "type": "boolean" },
+        "user_agent": { "type": "string" },
+        "pid": { "type": "integer" },
+        "process_name": { "type": "string" },
+        "process_path": { "type": "string" },
+        "parent_name": { "type": "string" },
+        "dest_ip": { "type": "string" },
+        "dest_port": { "type": "integer" },
+        "file_path": { "type": "string" },
+        "listen_port": { "type": "integer" },
+        "listen_addr": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,13 @@
+id: new_outbound_dest
+name: 신규 외부 연결
+enabled: true
+source: windows
+event_type: net_connect
+severity: medium
+auto_respond: false
+match:
+  first_seen_dest: true
+  ignore_private: true
+actions:
+  - alert
+description: 처음 관측된 공인 목적지 연결을 공격면과 경보에 올립니다.

@@ -1,0 +1,16 @@
+id: process_from_temp
+name: 임시·다운로드 폴더 프로세스
+enabled: true
+source: windows
+event_type: process_start
+severity: medium
+auto_respond: false
+match:
+  path_contains:
+    - \Temp\
+    - \AppData\Local\Temp\
+    - \Downloads\
+    - \AppData\Local\Temp
+actions:
+  - alert
+description: 임시 또는 다운로드 폴더에서 시작된 프로세스를 경보합니다. 종료는 운영자 승인 후에만 수행합니다.

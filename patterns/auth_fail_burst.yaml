@@ -1,0 +1,15 @@
+id: auth_fail_burst
+name: 인증 실패 폭주
+enabled: true
+source: http
+event_type: auth_fail
+severity: high
+auto_respond: true
+match:
+  group_by: client_ip
+  window_seconds: 60
+  threshold: 6
+actions:
+  - alert
+  - deny_ip
+description: 짧은 시간 동안 반복된 로그인 실패는 IP를 일시 차단합니다.

@@ -1,0 +1,15 @@
+id: http_rate_limit
+name: HTTP 요청 폭주
+enabled: true
+source: http
+event_type: request
+severity: high
+auto_respond: true
+match:
+  group_by: client_ip
+  window_seconds: 10
+  threshold: 8
+actions:
+  - alert
+  - deny_ip
+description: 같은 클라이언트가 짧은 시간에 과도한 요청을 보내면 IP를 일시 차단합니다.

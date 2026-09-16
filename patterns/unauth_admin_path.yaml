@@ -1,0 +1,17 @@
+id: unauth_admin_path
+name: 미인증 관리 경로
+enabled: true
+source: http
+event_type: request
+severity: high
+auto_respond: true
+match:
+  path_prefixes:
+    - /admin
+    - /api/admin
+    - /.env
+  missing_auth: true
+actions:
+  - alert
+  - deny_request
+description: 인증 헤더 없이 관리·민감 경로에 접근하면 요청을 거부합니다.

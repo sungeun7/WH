@@ -1,0 +1,13 @@
+id: learned_2549e51a90
+name: '학습 규칙: 민감 파일 변경'
+enabled: true
+source: windows
+event_type: file_change
+severity: high
+auto_respond: false
+match:
+  path_contains:
+  - .env
+actions:
+- alert
+description: 설정·자격 증명 관련 파일 변경을 추적합니다. 원문은 저장하지 않습니다.
