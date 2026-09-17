@@ -1,0 +1,22 @@
+id: probe_admin_paths
+name: 관리·스캐너 경로 탐색
+enabled: true
+source: http
+event_type: request
+severity: high
+auto_respond: true
+match:
+  path_prefixes:
+    - /wp-admin
+    - /wp-login.php
+    - /phpmyadmin
+    - /xmlrpc.php
+    - /actuator
+    - /server-status
+    - /cgi-bin
+    - /manager/html
+  missing_auth: true
+actions:
+  - alert
+  - deny_request
+description: 인증 없이 흔한 관리·스캐너 경로에 접근하면 요청을 거부합니다.

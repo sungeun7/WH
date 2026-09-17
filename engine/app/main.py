@@ -14,7 +14,7 @@ from .bus import hub
 from .config import CORS_ORIGINS, ENGINE_HOST, ENGINE_PORT
 from .db import add_audit, db, init_db, new_id, now, row_to_dict
 from .settings import get_settings, public_settings, save_settings
-from .patterns import store, write_approved_pattern
+from .patterns import store, write_approved_pattern, set_pattern_enabled, write_custom_pattern
 from .respond import (
     apply_actions,
     cancel_disruptive_pending,
@@ -104,6 +104,49 @@ def encode_alert(row: dict[str, Any]) -> dict[str, Any]:
     item = dict(row)
     if isinstance(item.get("payload"), str):
         item["payload"] = json.loads(item["payload"] or "{}")
+    event = (item.get("payload") or {}).get("event") or {}
+    fields = event.get("fields") or {}
+    source = event.get("source") or ""
+    origin: list[str] = []
+    cause: list[str] = []
+    if source == "http":
+        origin.append("웹/API 게이트웨이")
+        if fields.get("client_ip"):
+            origin.append(f"IP {fields.get('client_ip')}")
+    elif source == "windows":
+        origin.append("이 PC")
+        name = fields.get("process_name")
+        if name:
+            pid = fields.get("pid")
+            origin.append(f"{name} (PID {pid})" if pid else str(name))
+    elif source:
+        origin.append(str(source))
+    if item.get("title"):
+        cause.append(str(item["title"]))
+    method = fields.get("method")
+    path = fields.get("path")
+    if method or path:
+        cause.append(" ".join(str(x) for x in (method, path) if x))
+    if fields.get("has_auth") is False and path:
+        cause.append("인증 없음")
+    if fields.get("process_path"):
+        cause.append(str(fields.get("process_path")))
+    if fields.get("dest_ip"):
+        dest = str(fields.get("dest_ip"))
+        port = fields.get("dest_port")
+        cause.append(f"외부 {dest}:{port}" if port else f"외부 {dest}")
+    if fields.get("file_path"):
+        cause.append(str(fields.get("file_path")))
+    if fields.get("listen_port"):
+        cause.append(f"{fields.get('listen_addr') or '0.0.0.0'}:{fields.get('listen_port')}")
+    if item.get("rule_id"):
+        cause.append(f"규칙 {item['rule_id']}")
+    item["origin"] = " · ".join(origin) or "출처를 특정하지 못함"
+    seen: list[str] = []
+    for part in cause:
+        if part and part not in seen:
+            seen.append(part)
+    item["cause"] = " · ".join(seen) or (item.get("rationale") or "원인을 특정하지 못함")
     return item
 
 
@@ -135,7 +178,8 @@ def store_event(body: EventIn) -> dict[str, Any]:
         "severity_hint": body.severity_hint,
         "fields": fields,
     }
-    add_audit("event", f"{body.source}:{body.type}", {"id": eid})
+    if body.source != "windows":
+        add_audit("event", f"{body.source}:{body.type}", {"id": eid})
     return event
 
 
@@ -697,7 +741,69 @@ async def mitigate_surface(sid: str) -> dict[str, Any]:
 
 @app.get("/api/v1/patterns")
 def list_patterns() -> list[dict[str, Any]]:
-    return store.all()
+    rules = store.all()
+    rules.sort(key=lambda r: (not r.get("enabled"), r.get("name") or ""))
+    return rules
+
+
+class PatternEnableIn(BaseModel):
+    enabled: bool
+
+
+class PatternCreateIn(BaseModel):
+    name: str
+    source: str = "http"
+    event_type: str = "request"
+    severity: str = "medium"
+    auto_respond: bool = False
+    description: str = ""
+    path_prefixes: list[str] = Field(default_factory=list)
+    path_contains: list[str] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=lambda: ["alert"])
+
+
+@app.post("/api/v1/patterns/{rule_id}/enabled")
+async def enable_pattern(rule_id: str, body: PatternEnableIn) -> dict[str, Any]:
+    rule = set_pattern_enabled(rule_id, body.enabled)
+    if not rule:
+        return {"ok": False, "error": "not_found"}
+    add_audit("pattern", f"규칙 {'켜짐' if body.enabled else '꺼짐'}: {rule.get('name')}", {"id": rule_id})
+    await hub.broadcast("pattern", {"id": rule_id, "enabled": body.enabled})
+    return {"ok": True, "pattern": rule, "patterns": store.all()}
+
+
+@app.post("/api/v1/patterns")
+async def create_pattern(body: PatternCreateIn) -> dict[str, Any]:
+    match: dict[str, Any] = {}
+    prefixes = [p.strip() for p in body.path_prefixes if str(p).strip()]
+    contains = [p.strip() for p in body.path_contains if str(p).strip()]
+    if prefixes:
+        match["path_prefixes"] = prefixes
+        if body.source == "http":
+            match["missing_auth"] = True
+    if contains:
+        match["path_contains"] = contains
+    actions = body.actions or ["alert"]
+    if body.auto_respond and body.source == "http" and "deny_request" not in actions:
+        actions = [*actions, "deny_request"]
+    rule = write_custom_pattern(
+        {
+            "id": body.name,
+            "name": body.name,
+            "source": body.source,
+            "event_type": body.event_type,
+            "severity": body.severity,
+            "auto_respond": body.auto_respond,
+            "match": match,
+            "actions": actions,
+            "description": body.description or "운영자가 추가한 수비 규칙입니다.",
+        }
+    )
+    if not rule:
+        return {"ok": False, "error": "invalid"}
+    add_audit("pattern", f"규칙 추가: {rule.get('name')}", {"id": rule.get("id")})
+    await hub.broadcast("pattern", {"id": rule.get("id"), "created": True})
+    return {"ok": True, "pattern": rule, "patterns": store.all()}
 
 
 @app.get("/api/v1/patterns/drafts")
@@ -799,7 +905,11 @@ async def clear_timeline() -> dict[str, Any]:
 def timeline(limit: int = 150) -> list[dict[str, Any]]:
     with db() as conn:
         rows = conn.execute(
-            "SELECT * FROM audit ORDER BY ts DESC LIMIT ?",
+            """
+            SELECT * FROM audit
+            WHERE summary NOT LIKE 'windows:%'
+            ORDER BY ts DESC LIMIT ?
+            """,
             (min(limit, 500),),
         ).fetchall()
     items = []

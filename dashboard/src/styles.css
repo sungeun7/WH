@@ -317,6 +317,18 @@ header p,
   font-size: 11px;
 }
 
+.card.dim {
+  opacity: 0.55;
+}
+
+.add-rule {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.add-rule select,
+.add-rule input,
 .settings input[type="password"],
 .settings input[type="text"] {
   width: 100%;
@@ -388,10 +400,31 @@ header p,
   margin: 0 0 12px;
 }
 
-.tiny {
+.facts {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 8px;
+  padding: 8px 10px;
+  background: #050b0f;
+  border: 1px solid var(--line);
+}
+
+.facts div {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.facts dt {
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
-  margin: 8px 0 0;
+}
+
+.facts dd {
+  margin: 0;
+  word-break: break-all;
 }
 
 .text-link {

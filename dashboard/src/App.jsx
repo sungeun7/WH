@@ -65,6 +65,9 @@ const DONE = {
   mitigate: "해당 공격면을 막도록 올렸습니다.",
   approve: "규칙을 승인하고 바로 적용했습니다.",
   reject: "초안을 거절했습니다.",
+  "rule-on": "규칙을 켰습니다. 바로 적용됩니다.",
+  "rule-off": "규칙을 껐습니다. 더 이상 맞지 않습니다.",
+  "rule-add": "규칙을 추가하고 켰습니다.",
   settings: "설정을 저장했습니다.",
   ai: "사용할 AI를 바꿨습니다.",
   "timeline-del": "기록을 지웠습니다.",
@@ -80,11 +83,78 @@ function severityClass(value) {
   return "sev low";
 }
 
+function isWindowsLog(item) {
+  return String(item?.summary || "").toLowerCase().startsWith("windows:");
+}
+
 function when(ts) {
   if (!ts) return "";
   const n = typeof ts === "number" ? ts * 1000 : Date.parse(ts);
   if (Number.isNaN(n)) return "";
   return new Date(n).toLocaleString("ko-KR");
+}
+
+const EVENT_TYPE = {
+  request: "HTTP 요청",
+  auth_fail: "로그인 실패",
+  process_start: "프로세스 시작",
+  net_connect: "외부 연결",
+  file_change: "파일 변경",
+  port_open: "수신 포트",
+};
+
+function alertEvent(alert) {
+  return alert?.payload?.event || {};
+}
+
+function alertFacts(alert) {
+  if (alert?.origin && alert?.cause) {
+    return { origin: alert.origin, cause: alert.cause };
+  }
+  const event = alertEvent(alert);
+  const fields = event.fields || {};
+  const source = event.source || "";
+  const type = event.type || "";
+  const rule = alert.rule_id || alert.payload?.rule_id;
+  const originParts = [];
+  const causeParts = [];
+
+  if (source === "http") {
+    originParts.push("웹/API 게이트웨이");
+    if (fields.client_ip) originParts.push(`IP ${fields.client_ip}`);
+  } else if (source === "windows") {
+    originParts.push("이 PC");
+    if (fields.process_name) {
+      originParts.push(fields.process_name + (fields.pid ? ` (PID ${fields.pid})` : ""));
+    } else if (fields.parent_name) {
+      originParts.push(`부모 ${fields.parent_name}`);
+    }
+  } else if (source) {
+    originParts.push(source);
+  }
+
+  if (alert.title) causeParts.push(alert.title);
+  else if (EVENT_TYPE[type]) causeParts.push(EVENT_TYPE[type]);
+
+  if (fields.method || fields.path) {
+    causeParts.push([fields.method, fields.path].filter(Boolean).join(" "));
+  }
+  if (type === "auth_fail") causeParts.push("로그인 실패가 반복됨");
+  if (fields.has_auth === false && fields.path) causeParts.push("인증 없음");
+  if (fields.process_path) causeParts.push(fields.process_path);
+  if (fields.dest_ip) {
+    causeParts.push(`외부 ${fields.dest_ip}${fields.dest_port ? `:${fields.dest_port}` : ""}`);
+  }
+  if (fields.file_path) causeParts.push(fields.file_path);
+  if (fields.listen_port) {
+    causeParts.push(`${fields.listen_addr || "0.0.0.0"}:${fields.listen_port}`);
+  }
+  if (rule) causeParts.push(`규칙 ${rule}`);
+
+  return {
+    origin: originParts.filter(Boolean).join(" · ") || "출처를 특정하지 못함",
+    cause: [...new Set(causeParts.filter(Boolean))].join(" · ") || alert.rationale || "원인을 특정하지 못함",
+  };
 }
 
 function aiName(id) {
@@ -239,6 +309,10 @@ export default function App() {
     () => actions.filter((x) => x.status === "pending"),
     [actions]
   );
+  const visibleLogs = useMemo(
+    () => timeline.filter((item) => !isWindowsLog(item)),
+    [timeline]
+  );
   const nextAlert = openAlerts[0];
   const aiProviders = stats.ai_providers?.length ? stats.ai_providers : FALLBACK_AI;
   const mitigate = (settings?.resolve_action || "mitigate") === "mitigate";
@@ -330,7 +404,7 @@ export default function App() {
             )}
             <span className="meta action-explain">
               {nextAlert
-                ? `${openAlerts.length}건 · 다음: ${nextAlert.title}`
+                ? `${openAlerts.length}건 · 다음: ${nextAlert.title} · ${alertFacts(nextAlert).origin}`
                 : "처리할 경보가 없습니다"}
               {" · "}
               {mitigate ? "처리 시 원인 차단" : "지금은 목록에서만 제거"}
@@ -347,7 +421,7 @@ export default function App() {
           <div className="action-bar">
             {confirmClear ? (
               <span className="confirm-all">
-                <span>기록 {timeline.length}건을 모두 삭제할까요? 되돌릴 수 없습니다.</span>
+                <span>기록 {visibleLogs.length}건을 모두 삭제할까요? 되돌릴 수 없습니다.</span>
                 <button
                   className="danger"
                   disabled={!!busy}
@@ -366,12 +440,12 @@ export default function App() {
               <>
                 <button
                   className="danger lg"
-                  disabled={timeline.length === 0 || !!busy}
+                  disabled={visibleLogs.length === 0 || !!busy}
                   onClick={() => setConfirmClear(true)}
                 >
                   기록 모두 삭제
                 </button>
-                <span className="meta">{timeline.length}건 보관 중</span>
+                <span className="meta">{visibleLogs.length}건 보관 중</span>
               </>
             )}
           </div>
@@ -401,7 +475,7 @@ export default function App() {
               {tab === "alerts" && "의심 행위를 확인하고, 처리하면 목록에서 사라집니다."}
               {tab === "surface" && "우리 쪽에서 노출된 경로·포트·연결입니다. 막으려면 차단을 누르세요."}
               {tab === "blocks" && "이미 막힌 것과, 이 PC에서 한 번 더 승인이 필요한 조치입니다."}
-              {tab === "patterns" && "초안을 승인하면 같은 행위를 다음부터 자동으로 막습니다."}
+              {tab === "patterns" && "규칙을 켜고 끄거나, 초안을 승인하면 다음 탐지부터 바로 적용됩니다."}
               {tab === "timeline" && "처리·차단·설정 변경 기록입니다."}
               {tab === "settings" && "AI와 처리 방식을 고릅니다. 상단 AI 버튼으로도 모델을 바꿀 수 있습니다."}
             </p>
@@ -505,13 +579,16 @@ export default function App() {
           <Patterns
             patterns={patterns}
             drafts={drafts}
+            busy={busy}
             onApprove={(id) => run("approve", () => api.approveDraft(id))}
             onReject={(id) => run("reject", () => api.rejectDraft(id))}
+            onToggle={(id, enabled) => run(enabled ? "rule-on" : "rule-off", () => api.setPatternEnabled(id, enabled))}
+            onCreate={(body) => run("rule-add", () => api.createPattern(body))}
           />
         ) : null}
         {tab === "timeline" ? (
           <Timeline
-            items={timeline}
+            items={visibleLogs}
             busy={busy}
             onDelete={(id) => run("timeline-del", () => api.deleteTimeline(id))}
           />
@@ -581,13 +658,25 @@ function Alerts({ alerts, pending, settings, busy, onGoBlocks, onGoPatterns, onC
               extra="동작을 보려면 아래 테스트 이벤트를 펼치세요."
             />
           ) : null}
-          {ordered.map((a) => (
+          {ordered.map((a) => {
+            const facts = alertFacts(a);
+            return (
             <div className={`card ${a.severity === "high" || a.severity === "critical" ? "hot" : ""}`} key={a.id}>
               <div className="row">
                 <span className={severityClass(a.severity)}>{SEV[a.severity] || a.severity}</span>
                 <strong>{a.title}</strong>
               </div>
               <p>{a.rationale}</p>
+              <dl className="facts">
+                <div>
+                  <dt>발생지</dt>
+                  <dd>{facts.origin}</dd>
+                </div>
+                <div>
+                  <dt>원인</dt>
+                  <dd>{facts.cause}</dd>
+                </div>
+              </dl>
               <p className="meta">
                 {REC[a.recommended_action] || a.recommended_action} · {when(a.created_at)}
               </p>
@@ -609,7 +698,8 @@ function Alerts({ alerts, pending, settings, busy, onGoBlocks, onGoPatterns, onC
                 {mitigate ? "" : " 차단하고 닫기는 목록 제거와 함께 원인을 막습니다."}
               </p>
             </div>
-          ))}
+            );
+          })}
         </div>
         {ordered.length > 0 ? (
           <p className="hint linkish">
@@ -766,7 +856,41 @@ function Blocks({ blocks, actions, busy, onExecute, onUnblock, onCancel }) {
   );
 }
 
-function Patterns({ patterns, drafts, onApprove, onReject }) {
+function Patterns({ patterns, drafts, busy, onApprove, onReject, onToggle, onCreate }) {
+  const [filter, setFilter] = useState("all");
+  const [openAdd, setOpenAdd] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    source: "http",
+    event_type: "request",
+    path: "",
+    auto_respond: false,
+    description: "",
+  });
+  const shown = patterns.filter((p) => {
+    if (filter === "on") return p.enabled;
+    if (filter === "off") return !p.enabled;
+    return true;
+  });
+  const submit = () => {
+    const name = form.name.trim();
+    if (!name) return;
+    const path = form.path.trim();
+    const prefixes = form.source === "http" && path.startsWith("/") ? [path] : [];
+    const contains = path && !prefixes.length ? [path] : [];
+    onCreate({
+      name,
+      source: form.source,
+      event_type: form.event_type,
+      auto_respond: form.auto_respond,
+      description: form.description.trim(),
+      path_prefixes: prefixes,
+      path_contains: contains,
+      actions: ["alert"],
+    });
+    setForm({ name: "", source: "http", event_type: "request", path: "", auto_respond: false, description: "" });
+    setOpenAdd(false);
+  };
   return (
     <div className="grid two">
       <article>
@@ -786,10 +910,10 @@ function Patterns({ patterns, drafts, onApprove, onReject }) {
               <pre>{d.yaml_text}</pre>
             </details>
             <div className="row">
-              <button className="primary" onClick={() => onApprove(d.id)}>
+              <button className="primary" disabled={!!busy} onClick={() => onApprove(d.id)}>
                 승인하고 적용
               </button>
-              <button className="ghost" onClick={() => onReject(d.id)}>
+              <button className="ghost" disabled={!!busy} onClick={() => onReject(d.id)}>
                 거절
               </button>
             </div>
@@ -797,18 +921,93 @@ function Patterns({ patterns, drafts, onApprove, onReject }) {
         ))}
       </article>
       <article>
-        <h2>이미 켜진 규칙</h2>
-        {patterns.length === 0 ? <Empty text="적용된 규칙이 없습니다." /> : null}
-        {patterns.map((p) => (
-          <div className="card" key={p.id}>
+        <div className="row">
+          <h2>규칙</h2>
+          <span className="meta">켜짐 {patterns.filter((p) => p.enabled).length} / {patterns.length}</span>
+        </div>
+        <div className="row chips">
+          <button type="button" className={filter === "all" ? "primary" : "ghost"} onClick={() => setFilter("all")}>
+            전체
+          </button>
+          <button type="button" className={filter === "on" ? "primary" : "ghost"} onClick={() => setFilter("on")}>
+            켜짐
+          </button>
+          <button type="button" className={filter === "off" ? "primary" : "ghost"} onClick={() => setFilter("off")}>
+            꺼짐
+          </button>
+          <button type="button" className="ghost" onClick={() => setOpenAdd((v) => !v)}>
+            {openAdd ? "추가 닫기" : "규칙 추가"}
+          </button>
+        </div>
+        {openAdd ? (
+          <div className="card add-rule">
+            <label className="stack-label">
+              이름
+              <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="예: 관리 API 보호" />
+            </label>
+            <label className="stack-label">
+              대상
+              <select
+                value={`${form.source}:${form.event_type}`}
+                onChange={(e) => {
+                  const [source, event_type] = e.target.value.split(":");
+                  setForm((f) => ({ ...f, source, event_type }));
+                }}
+              >
+                <option value="http:request">웹/API 요청</option>
+                <option value="http:auth_fail">로그인 실패</option>
+                <option value="windows:process_start">이 PC 프로세스</option>
+                <option value="windows:net_connect">이 PC 외부 연결</option>
+                <option value="windows:file_change">이 PC 파일 변경</option>
+              </select>
+            </label>
+            <label className="stack-label">
+              경로 또는 포함 문자
+              <input
+                value={form.path}
+                onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))}
+                placeholder={form.source === "http" ? "/internal 또는 .env" : "Temp 또는 hosts"}
+              />
+            </label>
+            <label className="stack-label">
+              설명
+              <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="선택" />
+            </label>
+            {form.source === "http" ? (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={form.auto_respond}
+                  onChange={(e) => setForm((f) => ({ ...f, auto_respond: e.target.checked }))}
+                />
+                맞으면 요청을 바로 거부
+              </label>
+            ) : null}
+            <button className="primary" disabled={!form.name.trim() || !!busy} onClick={submit}>
+              추가하고 켜기
+            </button>
+          </div>
+        ) : null}
+        {shown.length === 0 ? <Empty text="이 필터에 해당하는 규칙이 없습니다." /> : null}
+        {shown.map((p) => (
+          <div className={`card ${p.enabled ? "" : "dim"}`} key={p.id}>
             <div className="row">
               <strong>{p.name}</strong>
               <em>{p.enabled ? "켜짐" : "꺼짐"}</em>
             </div>
             <p>{p.description}</p>
             <p className="meta">
-              {SEV[p.severity] || p.severity} · {p.auto_respond ? "자동 대응" : "경보만"}
+              {p.source === "http" ? "웹/API" : "이 PC"} · {SEV[p.severity] || p.severity} ·{" "}
+              {p.auto_respond ? "자동 대응" : "경보만"}
             </p>
+            <button
+              type="button"
+              className={p.enabled ? "ghost" : "primary"}
+              disabled={!!busy}
+              onClick={() => onToggle(p.id, !p.enabled)}
+            >
+              {p.enabled ? "끄기" : "켜기"}
+            </button>
           </div>
         ))}
       </article>
@@ -829,12 +1028,23 @@ function Timeline({ items, busy, onDelete }) {
   const [q, setQ] = useState("");
   const [kind, setKind] = useState("all");
   const visible = items.filter((item) => {
+    if (String(item.summary || "").toLowerCase().startsWith("windows:")) return false;
     if (kind !== "all" && item.kind !== kind) return false;
     if (!q.trim()) return true;
     const hay = `${item.summary || ""} ${item.kind || ""}`.toLowerCase();
     return hay.includes(q.trim().toLowerCase());
   });
-  const kinds = ["all", ...Array.from(new Set(items.map((item) => item.kind).filter(Boolean)))];
+  const kinds = [
+    "all",
+    ...Array.from(
+      new Set(
+        items
+          .filter((item) => !String(item.summary || "").toLowerCase().startsWith("windows:"))
+          .map((item) => item.kind)
+          .filter(Boolean)
+      )
+    ),
+  ];
   return (
     <article>
       <div className="row">

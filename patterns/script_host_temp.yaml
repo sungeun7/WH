@@ -1,0 +1,15 @@
+id: script_host_temp
+name: 스크립트 호스트 실행
+enabled: true
+source: windows
+event_type: process_start
+severity: medium
+auto_respond: false
+match:
+  process_names:
+    - wscript.exe
+    - cscript.exe
+    - mshta.exe
+actions:
+  - alert
+description: wscript·cscript·mshta 실행을 경보합니다. 자주 쓰는 PC면 이 규칙을 끄세요. 종료는 승인 후입니다.
