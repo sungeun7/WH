@@ -21,18 +21,6 @@ export const api = {
   drafts: () => fetch("/api/v1/patterns/drafts").then(json),
   approveDraft: (id) => fetch(`/api/v1/patterns/drafts/${id}/approve`, { method: "POST" }).then(json),
   rejectDraft: (id) => fetch(`/api/v1/patterns/drafts/${id}/reject`, { method: "POST" }).then(json),
-  setPatternEnabled: (id, enabled) =>
-    fetch(`/api/v1/patterns/${id}/enabled`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled }),
-    }).then(json),
-  createPattern: (body) =>
-    fetch("/api/v1/patterns", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).then(json),
   timeline: () => fetch("/api/v1/timeline").then(json),
   deleteTimeline: (id) => fetch(`/api/v1/timeline/${id}`, { method: "DELETE" }).then(json),
   clearTimeline: () => fetch("/api/v1/timeline", { method: "DELETE" }).then(json),

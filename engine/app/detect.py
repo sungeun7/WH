@@ -68,33 +68,6 @@ def match_rule(rule: dict[str, Any], event: dict[str, Any]) -> bool:
     if contains and not any(c.lower() in file_or_proc.lower() for c in contains):
         return False
 
-    methods = match.get("methods") or []
-    if methods:
-        method = str(fields.get("method") or "").upper()
-        if method not in {str(m).upper() for m in methods}:
-            return False
-
-    ua_need = match.get("ua_contains") or []
-    if ua_need:
-        ua = str(fields.get("user_agent") or "").lower()
-        if not any(str(x).lower() in ua for x in ua_need):
-            return False
-
-    dest_ports = match.get("dest_ports") or []
-    if dest_ports:
-        try:
-            port = int(fields.get("dest_port"))
-        except (TypeError, ValueError):
-            return False
-        if port not in {int(p) for p in dest_ports}:
-            return False
-
-    names = match.get("process_names") or []
-    if names:
-        pname = str(fields.get("process_name") or "").lower()
-        if pname not in {str(n).lower() for n in names}:
-            return False
-
     if match.get("first_seen_dest"):
         dest_ip = fields.get("dest_ip")
         dest_port = fields.get("dest_port")
